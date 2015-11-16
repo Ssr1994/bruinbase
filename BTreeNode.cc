@@ -85,7 +85,7 @@ RC BTLeafNode::insertAndSplit(int key, const RecordId& rid,
   if (sibling.getKeyCount() > 0)
     return -1;
 
-  const int half = (ENTRIES_PER_PAGE + 1) / 2;
+  const int half = ENTRIES_PER_PAGE / 2 + 1;
   int eid, split = half;
   char copy[half * ENTRY_SIZE];
   locate(key, eid); // We assume no duplicate keys

@@ -22,6 +22,7 @@ using namespace std;
 extern FILE* sqlin;
 int sqlparse(void);
 
+static int cnt = 1;
 
 RC SqlEngine::run(FILE* commandline)
 {
@@ -135,6 +136,7 @@ RC SqlEngine::load(const string& table, const string& loadfile, bool index)
 {
   /* your code here */
   RecordFile rf;   // RecordFile containing the table
+  BTreeIndex tree;
   
   RC       rc;
   int      key;     
@@ -151,17 +153,11 @@ RC SqlEngine::load(const string& table, const string& loadfile, bool index)
   
   // open the table file
   string tableName = table + ".tbl";
-  if (rf.open(tableName, 'w') < 0) {
-	// if failed to open (does not exist), create the file
-    ofstream newTable (tableName.c_str());
-    newTable.close();
-    if ((rc = rf.open(tableName, 'w')) < 0) {
-      fprintf(stderr, "Error: opening %s\n", tableName.c_str());
-      goto exit_load;
-    }
+  if ((rc = rf.open(tableName, 'w')) < 0) {
+    fprintf(stderr, "Error: opening %s\n", tableName.c_str());
+    goto exit_load;
   }
   
-  BTreeIndex tree;
   if (index) {
 	string indexName = table + ".idx";
     if ((rc = tree.open(indexName, 'w')) < 0) {
@@ -191,8 +187,8 @@ RC SqlEngine::load(const string& table, const string& loadfile, bool index)
   rc = 0;
   
   exit_load:
-  rf.close();
   tree.close();
+  rf.close();
   fileToLoad.close();
   return rc;
 }

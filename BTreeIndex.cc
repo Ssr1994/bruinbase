@@ -128,7 +128,6 @@ RC BTreeIndex::insertHelper(int key, const RecordId& rid, PageId nodeId, int lev
       newNodeId = pf.endPid();
       sibling.setNextNodePtr(node.getNextNodePtr());
       node.setNextNodePtr(newNodeId);
-	  cout << "New ID: " << newNodeId << " and Key: " << keyUp << endl;
       if ((rc = sibling.write(newNodeId, pf)) < 0)
         return rc;
     }
@@ -147,7 +146,6 @@ RC BTreeIndex::insertHelper(int key, const RecordId& rid, PageId nodeId, int lev
       return rc;
 
     if (newNodeId != -1) { // split in the child node
-	  cout << "New child ID: " << newNodeId << " and Key: " << keyUp << endl;
       if (node.insert(keyUp, newNodeId) == RC_NODE_FULL) {
         BTNonLeafNode sibling;
         if ((rc = node.insertAndSplit(keyUp, newNodeId, sibling, keyUp)) < 0)
@@ -247,6 +245,7 @@ void BTreeIndex::printTree(PageId pid, int level) {
 	leaf.read(pid, pf);
 	int count = leaf.getKeyCount(), key;
 	RecordId rid;
+	cout << "LEVEL" << level << " ";
 	for (int i = 0; i < count; i++) {
 	  leaf.readEntry(i, key, rid);
 	  cout << key << " ";
@@ -256,6 +255,7 @@ void BTreeIndex::printTree(PageId pid, int level) {
   else {
 	BTNonLeafNode nonleaf;
 	nonleaf.read(pid, pf);
+	cout << "LEVEL" << level << " ";
 	nonleaf.printKeys();
 	vector<PageId> ptrs;
 	nonleaf.getChildPtrs(ptrs);
