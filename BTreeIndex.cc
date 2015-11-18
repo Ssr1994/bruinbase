@@ -159,7 +159,7 @@ RC BTreeIndex::insertHelper(int key, const RecordId& rid, PageId nodeId, int lev
         keyUp = -1;
         newNodeId = -1;
       }
-	  
+      
       if ((rc = node.write(nodeId, pf)) < 0)
         return rc;
     }
@@ -230,7 +230,7 @@ RC BTreeIndex::readForward(IndexCursor& cursor, int& key, RecordId& rid)
   if ((rc = node.readEntry(cursor.eid, key, rid)) < 0)
     return rc;
 
-  if (++cursor.eid >= BTLeafNode::ENTRIES_PER_PAGE) {
+  if (++cursor.eid >= node.getKeyCount()) {
     cursor.pid = node.getNextNodePtr();
     cursor.eid = 0;
   }
@@ -239,27 +239,27 @@ RC BTreeIndex::readForward(IndexCursor& cursor, int& key, RecordId& rid)
 
 void BTreeIndex::printTree(PageId pid, int level) {
   if (pid == -1)
-	pid = rootPid;
+    pid = rootPid;
   if (level == treeHeight) {
-	BTLeafNode leaf;
-	leaf.read(pid, pf);
-	int count = leaf.getKeyCount(), key;
-	RecordId rid;
-	cout << "LEVEL" << level << " ";
-	for (int i = 0; i < count; i++) {
-	  leaf.readEntry(i, key, rid);
-	  cout << key << " ";
-	}
-	cout << endl;
+    BTLeafNode leaf;
+    leaf.read(pid, pf);
+    int count = leaf.getKeyCount(), key;
+    RecordId rid;
+    cout << "LEVEL" << level << " ";
+    for (int i = 0; i < count; i++) {
+      leaf.readEntry(i, key, rid);
+      cout << key << " ";
+    }
+    cout << endl;
   }
   else {
-	BTNonLeafNode nonleaf;
-	nonleaf.read(pid, pf);
-	cout << "LEVEL" << level << " ";
-	nonleaf.printKeys();
-	vector<PageId> ptrs;
-	nonleaf.getChildPtrs(ptrs);
-	for (int i = 0; i < ptrs.size(); i++)
-	  printTree(ptrs[i], level + 1);
+    BTNonLeafNode nonleaf;
+    nonleaf.read(pid, pf);
+    cout << "LEVEL" << level << " ";
+    nonleaf.printKeys();
+    vector<PageId> ptrs;
+    nonleaf.getChildPtrs(ptrs);
+    for (int i = 0; i < ptrs.size(); i++)
+      printTree(ptrs[i], level + 1);
   }  
 }

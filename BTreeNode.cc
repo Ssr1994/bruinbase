@@ -354,7 +354,7 @@ void BTNonLeafNode::locateChildPtr(int searchKey, PageId& pid)
  * @param pid2[IN] the PageId to insert behind the key
  */
 void BTNonLeafNode::initializeRoot(PageId pid1, int key, PageId pid2)
-{  
+{
   int n = 1;
   memcpy(buffer, &n, sizeof(int));
   memcpy(buffer + sizeof(int), &pid1, sizeof(PageId));
@@ -373,10 +373,15 @@ RC BTNonLeafNode::splitFromSibling(int count, PageId sibPid1, char *data, int ds
 
 void BTNonLeafNode::printKeys() {
   int count = getKeyCount(), key;
-  char *ptr = buffer + sizeof(int) + sizeof(PageId);
+  PageId pid;
+  char *ptr = buffer + sizeof(int);
+  memcpy(&pid, ptr, sizeof(PageId));
+  ptr += sizeof(PageId);
+  cout << pid << " ";
   for (int i = 0; i < count; i++, ptr += ENTRY_SIZE) {
-	memcpy(&key, ptr, sizeof(int));
-	cout << key << " ";
+    memcpy(&key, ptr, sizeof(int));
+    memcpy(&pid, ptr + sizeof(int), sizeof(PageId));
+    cout << key << "," << pid << " ";
   }
   cout << endl;
 }
@@ -386,7 +391,7 @@ void BTNonLeafNode::getChildPtrs(vector<PageId>& ptrs) {
   PageId pid;
   char *ptr = buffer + sizeof(int);
   for (int i = 0; i <= count; i++, ptr += ENTRY_SIZE) {
-	memcpy(&pid, ptr, sizeof(PageId));
-	ptrs.push_back(pid);
+    memcpy(&pid, ptr, sizeof(PageId));
+    ptrs.push_back(pid);
   }
 }

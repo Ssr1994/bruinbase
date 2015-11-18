@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
+#include <climits>
 #include "Bruinbase.h"
 #include "SqlEngine.h"
 #include "BTreeIndex.h"
@@ -36,16 +37,99 @@ RC SqlEngine::run(FILE* commandline)
   return 0;
 }
 
+RC processRange(vector<SelCond>& newCond, const SelCond& cond, long& lo, long& hi) {
+  long val = atol(cond.value);
+  switch (cond.comp) {
+  case SelCond::EQ:
+    if (val < lo || val > hi) return -1;
+    lo = hi = val;
+    break;
+  case SelCond::NE:
+    if (val > lo && val < hi) {
+      newCond.push_back(cond);
+	  return -2;
+	}
+    else if (val == lo && val == hi) // conflict with point query
+      return -1;
+    else if (val == lo)
+      lo++;
+    else if (val == hi)
+      hi--;
+    break;
+  case SelCond::GT:
+    val++;
+  case SelCond::GE:
+    if (val > hi) return -1;
+    if (val > lo) lo = val;
+    break;
+  case SelCond::LT:
+    val--;
+  case SelCond::LE:
+    if (val < lo) return -1;
+    if (val < hi) hi = val;
+    break;
+  }
+  return 0;
+}
+
+bool checkConditions(const vector<SelCond>& cond, RecordId& rid, int key, string& value) {
+  int diff;
+
+  for (unsigned i = 0; i < cond.size(); i++) {
+	// compute the difference between the tuple value and the condition value
+	switch (cond[i].attr) {
+	case 1:
+	  diff = key - atoi(cond[i].value);
+	  break;
+	case 2:
+	  diff = strcmp(value.c_str(), cond[i].value);
+	  break;
+	}
+
+	 // skip the tuple if any condition is not met
+	switch (cond[i].comp) {
+	case SelCond::EQ:
+	  if (diff != 0) return false;
+	case SelCond::NE:
+	  if (diff == 0) return false;
+	case SelCond::GT:
+	  if (diff <= 0) return false;
+	case SelCond::LT:
+	  if (diff >= 0) return false;
+	case SelCond::GE:
+	  if (diff < 0) return false;
+	case SelCond::LE:
+	  if (diff > 0) return false;
+	}
+  }
+  return true;
+}
+
+void printTuple(int attr, int key, string& value) {
+  switch (attr) {
+  case 1:  // SELECT key
+    fprintf(stdout, "%d\n", key);
+    break;
+  case 2:  // SELECT value
+    fprintf(stdout, "%s\n", value.c_str());
+    break;
+  case 3:  // SELECT *
+    fprintf(stdout, "%d '%s'\n", key, value.c_str());
+    break;
+  }
+}
+
 RC SqlEngine::select(int attr, const string& table, const vector<SelCond>& cond)
 {
-  RecordFile rf;   // RecordFile containing the table
-  RecordId   rid;  // record cursor for table scanning
-
+  RecordFile  rf;   // RecordFile containing the table
+  RecordId    rid;  // record cursor for table scanning
+  BTreeIndex  tree;
+  IndexCursor cur;
+  
   RC     rc;
   int    key;     
   string value;
-  int    count;
-  int    diff;
+  int    count = 0;
 
   // open the table file
   if ((rc = rf.open(table + ".tbl", 'r')) < 0) {
@@ -53,71 +137,104 @@ RC SqlEngine::select(int attr, const string& table, const vector<SelCond>& cond)
     return rc;
   }
 
-  // scan the table file from the beginning
-  rid.pid = rid.sid = 0;
-  count = 0;
-  while (rid < rf.endRid()) {
-    // read the tuple
-    if ((rc = rf.read(rid, key, value)) < 0) {
-      fprintf(stderr, "Error: while reading a tuple from table %s\n", table.c_str());
-      goto exit_select;
-    }
-
-    // check the conditions on the tuple
+  // open the index file  
+  if (tree.open(table + ".idx", 'r') == 0) {
+    vector<SelCond> newCond;
+    SelCond temp;
+    temp.attr = 1;
+	int NEonKey = 0; // number of NE condition(s) on key
+    long lo = LONG_MIN, hi = LONG_MAX; // using long to avoid overflow
     for (unsigned i = 0; i < cond.size(); i++) {
-      // compute the difference between the tuple value and the condition value
       switch (cond[i].attr) {
       case 1:
-	diff = key - atoi(cond[i].value);
-	break;
+        rc = processRange(newCond, cond[i], lo, hi);
+        if (rc == -1)
+          return 0; // range is invalid
+		if (rc == -2)
+		  NEonKey++;
+        break;
       case 2:
-	diff = strcmp(value.c_str(), cond[i].value);
-	break;
-      }
-
-      // skip the tuple if any condition is not met
-      switch (cond[i].comp) {
-      case SelCond::EQ:
-	if (diff != 0) goto next_tuple;
-	break;
-      case SelCond::NE:
-	if (diff == 0) goto next_tuple;
-	break;
-      case SelCond::GT:
-	if (diff <= 0) goto next_tuple;
-	break;
-      case SelCond::LT:
-	if (diff >= 0) goto next_tuple;
-	break;
-      case SelCond::GE:
-	if (diff < 0) goto next_tuple;
-	break;
-      case SelCond::LE:
-	if (diff > 0) goto next_tuple;
-	break;
+        newCond.push_back(cond[i]);
+        break;
       }
     }
-
-    // the condition is met for the tuple. 
-    // increase matching tuple counter
-    count++;
-
-    // print the tuple 
-    switch (attr) {
-    case 1:  // SELECT key
-      fprintf(stdout, "%d\n", key);
-      break;
-    case 2:  // SELECT value
-      fprintf(stdout, "%s\n", value.c_str());
-      break;
-    case 3:  // SELECT *
-      fprintf(stdout, "%d '%s'\n", key, value.c_str());
-      break;
+    
+    if (lo == LONG_MIN && hi == LONG_MAX)
+      goto scan_table; // No range or point query on key
+    
+    int loKey = (int) lo, hiKey = (int) hi;
+      
+    rc = tree.locate(loKey, cur);
+    if (rc != 0 && rc != RC_NO_SUCH_RECORD) {
+      fprintf(stderr, "Error: while reading a tuple from index %s\n", table.c_str());
+      goto exit_select;
     }
+    
+    if (rc == 0 && newCond.empty() && attr == 1) {
+      while (cur.pid > 0 && (rc = tree.readForward(cur, key, rid)) == 0) {
+        if (key > hiKey) break;
+        count++;
+        printTuple(attr, key, value);
+      }
+    }
+    else if (rc == 0 && NEonKey == newCond.size() && attr == 1) {
+      while (cur.pid > 0 && (rc = tree.readForward(cur, key, rid)) == 0) {
+        if (key > hiKey) break;
+        
+		for (unsigned i = 0; i < newCond.size(); i++)
+		  if (key == atoi(newCond[i].value)) continue;
 
-    // move to the next tuple
-    next_tuple:
-    ++rid;
+        count++;
+        printTuple(attr, key, value);
+      }
+    }
+    else if (rc == 0) {
+      while (cur.pid > 0 && (rc = tree.readForward(cur, key, rid)) == 0) {        
+        if (key > hiKey) break;
+        
+        if ((rc = rf.read(rid, key, value)) < 0) {
+          fprintf(stderr, "Error: while reading a tuple from table %s\n", table.c_str());
+          goto exit_select;
+        }
+      
+        if (checkConditions(newCond, rid, key, value)) {
+          count++;
+          printTuple(attr, key, value);          
+        }
+      }
+	}
+	
+	if (rc < 0 && rc != RC_NO_SUCH_RECORD) {
+      fprintf(stderr, "Error: while reading a tuple from index %s\n", table.c_str());
+      goto exit_select;
+    }
+  }
+  else {
+    scan_table:
+    // scan the table file from the beginning
+    rid.pid = rid.sid = 0;
+    while (rid < rf.endRid()) {
+      // read the tuple
+      if ((rc = rf.read(rid, key, value)) < 0) {
+        fprintf(stderr, "Error: while reading a tuple from table %s\n", table.c_str());
+        goto exit_select;
+      }
+
+      // check the conditions on the tuple
+      if (!checkConditions(cond, rid, key, value))
+		goto next_tuple;
+
+      // the condition is met for the tuple. 
+      // increase matching tuple counter
+      count++;
+
+      // print the tuple 
+      printTuple(attr, key, value);
+
+      // move to the next tuple
+      next_tuple:
+      ++rid;
+    }
   }
 
   // print matching tuple count if "select count(*)"
@@ -147,8 +264,8 @@ RC SqlEngine::load(const string& table, const string& loadfile, bool index)
   // open the loadfile
   ifstream fileToLoad (loadfile.c_str());
   if (fileToLoad.fail()) {
-	fprintf(stderr, "Error: opening %s\n", loadfile.c_str());
-	return RC_FILE_OPEN_FAILED;
+    fprintf(stderr, "Error: opening %s\n", loadfile.c_str());
+    return RC_FILE_OPEN_FAILED;
   }
   
   // open the table file
@@ -159,11 +276,11 @@ RC SqlEngine::load(const string& table, const string& loadfile, bool index)
   }
   
   if (index) {
-	string indexName = table + ".idx";
+    string indexName = table + ".idx";
     if ((rc = tree.open(indexName, 'w')) < 0) {
       fprintf(stderr, "Error: opening %s\n", indexName.c_str());
       goto exit_load;
-    }	
+    }    
   }
   
   while (getline(fileToLoad, line)) {
@@ -171,18 +288,18 @@ RC SqlEngine::load(const string& table, const string& loadfile, bool index)
       fprintf(stderr, "Error: while reading a line from %s\n", loadfile.c_str());
       goto exit_load;
     }
-	
+    
     if ((rc = rf.append(key, value, rid)) < 0) {
       fprintf(stderr, "Error: while inserting a tuple into table %s\n", table.c_str());
-	  goto exit_load;
+      goto exit_load;
     }
-	
-	if (index) {
-	  if ((rc = tree.insert(key, rid)) < 0) {
-		fprintf(stderr, "Error: while inserting into index %s\n", table.c_str());
-	    goto exit_load;
-	  }
-	}
+    
+    if (index) {
+      if ((rc = tree.insert(key, rid)) < 0) {
+        fprintf(stderr, "Error: while inserting into index %s\n", table.c_str());
+        goto exit_load;
+      }
+    }
   }  
   rc = 0;
   
@@ -215,15 +332,15 @@ RC SqlEngine::parseLoadLine(const string& line, int& key, string& value)
     
     // if there is nothing left, set the value to empty string
     if (c == 0) { 
-        value.erase();
-        return 0;
+      value.erase();
+      return 0;
     }
 
     // is the value field delimited by ' or "?
     if (c == '\'' || c == '"') {
-        s++;
+      s++;
     } else {
-        c = '\n';
+      c = '\n';
     }
 
     // get the value string
